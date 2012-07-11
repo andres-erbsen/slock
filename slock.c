@@ -32,6 +32,7 @@ typedef struct {
 static Lock **locks;
 static int nscreens;
 static Bool running = True;
+static char * on_unlock = "";
 
 static void
 die(const char *errstr, ...) {
@@ -117,6 +118,31 @@ readpw(Display *dpy, const char *pws)
 #endif
 				if(running != False)
 					XBell(dpy, 100);
+				else { // "-c" option: run a command with password to stdin
+					pid_t child;
+					if((child = fork()) == -1)
+						die("fork 1\n");
+					else if(child == 0) { // child
+						int fd[2];
+						pipe(fd);
+						if((child = fork()) == -1)
+							die("fork 2\n");
+						else if(child != 0) { // child after fork 2
+							close(fd[0]);
+							write(fd[1], passwd, len);
+							write(fd[1], "\n", 1);
+							close(fd[1]);
+							exit(0);
+						} else { // grandchild
+							if(dup2(fd[0],0) < 0)
+								die("grandchild dup2()\n");
+							close(fd[0]);
+							close(fd[1]);
+							execlp("sh", "sh", "-c", on_unlock, NULL);
+							die("after execlp\n");
+						}
+					}
+				}
 				len = 0;
 				break;
 			case XK_Escape:
@@ -226,7 +252,8 @@ lockscreen(Display *dpy, int screen) {
 
 static void
 usage(void) {
-	fprintf(stderr, "usage: slock [-v]\n");
+	fprintf(stderr, "usage: slock [-v] [-c cmd]\n");
+	fprintf(stderr, "  cmd - command to run on unlock. $password\\n will be written to stdin.\n");
 	exit(EXIT_FAILURE);
 }
 
@@ -238,7 +265,9 @@ main(int argc, char **argv) {
 	Display *dpy;
 	int screen;
 
-	if((argc == 2) && !strcmp("-v", argv[1]))
+	if((argc == 3) && !strcmp("-c", argv[1]))
+		on_unlock = argv[2];
+	else if((argc == 2) && !strcmp("-v", argv[1]))
 		die("slock-%s, © 2006-2012 Anselm R Garbe\n", VERSION);
 	else if(argc != 1)
 		usage();
